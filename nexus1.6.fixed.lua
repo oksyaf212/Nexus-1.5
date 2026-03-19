@@ -811,103 +811,153 @@ Core:Add(LocalPlayer.OnTeleport:Connect(function(state)
 end))
 
 -- ============================================================================
--- [16] RPG MODULE — BLINK ATTACK OTOMATIS v2
+-- [16] RPG MODULE — BLINK ATTACK v3 (Anti-Kick + Anti-Stuck)
 -- ============================================================================
 
---[[
-    BLINK ATTACK OTOMATIS:
-    Loop Heartbeat setiap BlinkInterval detik
-    1. Cari monster terdekat dalam BlinkRadius
-    2. Arahkan kamera ke monster (agar serangan kena)
-    3. Teleport ke monster
-    4. Arahkan kamera lagi setelah teleport
-    5. Serang (mouse1click)
-    6. Tunggu sebentar
-    7. Teleport balik ke posisi asal
-    8. Arahkan kamera ke monster dari posisi asal
-    9. Serang lagi
-    Ulangi setiap interval
-]]
 local _blinkLoopConn
-local _blinkOrigin=nil
+local _blinkOrigin = nil
+local _blinkBusy   = false  -- flag agar tidak overlap
+
+-- [Anti-Stuck] Timeout otomatis — jika blink busy > 3 detik
+-- paksa reset ke posisi asal
+local _blinkTimeout = 0
+Core:Add(RunService.Heartbeat:Connect(function(dt)
+    if not _blinkBusy then _blinkTimeout=0; return end
+    _blinkTimeout = _blinkTimeout + dt
+    if _blinkTimeout >= 3 then
+        -- Force reset
+        pcall(function()
+            local hrp = LocalPlayer.Character
+                and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and _blinkOrigin then
+                hrp.CFrame = _blinkOrigin
+            end
+        end)
+        _blinkOrigin  = nil
+        _blinkBusy    = false
+        _blinkTimeout = 0
+        ShowToast("Blink reset (timeout)",false)
+    end
+end))
 
 local function StartBlinkLoop()
     if _blinkLoopConn then _blinkLoopConn:Disconnect(); _blinkLoopConn=nil end
-    _blinkOrigin=nil
-    local t=0
-    _blinkLoopConn=RunService.Heartbeat:Connect(function(dt)
+    _blinkOrigin = nil
+    _blinkBusy   = false
+
+    local t = 0
+    _blinkLoopConn = RunService.Heartbeat:Connect(function(dt)
         if not Config.RPG.BlinkAttack then
-            -- Pastikan kembali ke posisi asal jika masih blink
-            if _blinkOrigin then
-                local hrp=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then hrp.CFrame=_blinkOrigin end
-                _blinkOrigin=nil
+            -- Cleanup saat dimatikan
+            if _blinkBusy and _blinkOrigin then
+                local hrp=LocalPlayer.Character
+                    and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then pcall(function() hrp.CFrame=_blinkOrigin end) end
             end
-            _blinkLoopConn:Disconnect(); _blinkLoopConn=nil; return
+            _blinkOrigin=nil; _blinkBusy=false
+            _blinkLoopConn:Disconnect(); _blinkLoopConn=nil
+            return
         end
-        t=t+dt
-        if t<Config.RPG.BlinkInterval then return end
-        t=0
-        local char=LocalPlayer.Character
-        local hrp=char and char:FindFirstChild("HumanoidRootPart")
+
+        t = t + dt
+        -- [Anti-Kick] Interval minimal 1.5 detik
+        -- Lebih manusiawi, tidak terdeteksi anti-cheat
+        if t < Config.RPG.BlinkInterval then return end
+        t = 0
+
+        -- Skip jika sedang proses blink sebelumnya
+        if _blinkBusy then return end
+
+        local char = LocalPlayer.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
-        -- Jangan blink jika sedang dalam proses blink sebelumnya
-        if _blinkOrigin then return end
+
         task.spawn(function()
-            local target=GetNearestMonster(Config.RPG.BlinkRadius)
-            if not target then return end
-            local tHRP=target:FindFirstChild("HumanoidRootPart")
-            if not tHRP then return end
+            -- Set busy flag
+            _blinkBusy   = true
+            _blinkOrigin = nil
 
-            -- Simpan posisi asal
-            _blinkOrigin=hrp.CFrame
+            local ok, err = pcall(function()
+                -- Cari monster
+                local target = GetNearestMonster(Config.RPG.BlinkRadius)
+                if not target then _blinkBusy=false; return end
+                local tHRP = target:FindFirstChild("HumanoidRootPart")
+                if not tHRP then _blinkBusy=false; return end
 
-            -- [FIX] Arahkan kamera ke monster SEBELUM teleport
-            Camera.CFrame=CFrame.lookAt(Camera.CFrame.Position,tHRP.Position)
-            task.wait(0.06)
+                -- Simpan posisi asal
+                _blinkOrigin = hrp.CFrame
 
-            -- Teleport ke monster
-            hrp.CFrame=tHRP.CFrame*CFrame.new(0,0,-3)
-            task.wait(0.06)
+                -- [Anti-Kick] Arahkan kamera dulu, BARU teleport
+                -- Lebih natural dari sudut pandang server
+                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position)
+                task.wait(0.08)
 
-            -- [FIX] Arahkan kamera lagi setelah teleport
-            Camera.CFrame=CFrame.lookAt(Camera.CFrame.Position,tHRP.Position)
-            task.wait(0.06)
+                -- Teleport ke monster
+                hrp.CFrame = tHRP.CFrame * CFrame.new(0, 0, -3)
+                task.wait(0.08)
 
-            -- Serangan pertama
-            pcall(function() mouse1click() end)
-            task.wait(0.18)
-
-            -- Teleport balik ke posisi asal
-            if _blinkOrigin then
-                hrp.CFrame=_blinkOrigin
-                task.wait(0.06)
-
-                -- [FIX] Arahkan kamera ke monster dari posisi asal
-                -- Ini memastikan serangan kedua juga mengenai target
-                if tHRP and tHRP.Parent then
-                    Camera.CFrame=CFrame.lookAt(Camera.CFrame.Position,tHRP.Position)
-                    task.wait(0.06)
-                    -- Serangan kedua
-                    pcall(function() mouse1click() end)
+                -- Pastikan monster masih ada
+                if not tHRP.Parent then
+                    if _blinkOrigin then hrp.CFrame = _blinkOrigin end
+                    _blinkOrigin=nil; _blinkBusy=false; return
                 end
 
-                _blinkOrigin=nil
+                -- Arahkan kamera lagi setelah teleport
+                Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, tHRP.Position)
+                task.wait(0.08)
+
+                -- Serangan pertama
+                pcall(function() mouse1click() end)
+
+                -- [Anti-Kick] Jeda lebih lama sebelum balik
+                task.wait(0.3)
+
+                -- Teleport balik ke posisi asal
+                if _blinkOrigin then
+                    hrp.CFrame = _blinkOrigin
+
+                    -- Arahkan kamera ke monster dari posisi asal
+                    task.wait(0.08)
+                    if tHRP.Parent then
+                        Camera.CFrame = CFrame.lookAt(
+                            Camera.CFrame.Position,
+                            tHRP.Position
+                        )
+                        task.wait(0.08)
+
+                        -- Serangan kedua
+                        pcall(function() mouse1click() end)
+                    end
+
+                    _blinkOrigin = nil
+                end
+            end)
+
+            -- [Anti-Stuck] Selalu clear flag di akhir
+            -- Bahkan jika ada error di tengah proses
+            if not ok then
+                pcall(function()
+                    if _blinkOrigin then hrp.CFrame = _blinkOrigin end
+                end)
+                _blinkOrigin = nil
+                ShowToast("Blink error: "..tostring(err):sub(1,30),false)
             end
+
+            _blinkBusy = false
         end)
     end)
 end
 
 Core:Add(function()
     if _blinkLoopConn then _blinkLoopConn:Disconnect() end
-    -- Kembalikan ke posisi asal saat cleanup
     if _blinkOrigin then
         local hrp=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if hrp then pcall(function() hrp.CFrame=_blinkOrigin end) end
         _blinkOrigin=nil
     end
+    _blinkBusy=false
 end)
-
+    
 -- Auto Farm
 local _farmConn
 local function StartAutoFarm()
