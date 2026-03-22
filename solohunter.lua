@@ -1110,15 +1110,4 @@ print("👁 ESP + Speed")
 print(string.format("📡 Remote loaded: %d",(function()
     local n=0; for _,v in pairs(R) do if v then n=n+1 end end; return n
 end)()))
--- ============================================================================
-```
-
----
-
-## Upload & Loader
-
-```lua
-loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/oksyaf212/Nexus-1.5/main/solohunter.lua",
-    true
-))()
+-- ===========================================================================
