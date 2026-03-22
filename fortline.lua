@@ -650,9 +650,10 @@ function UI:Build()
     Wrapper.Size=UDim2.new(0,255,0,420); Wrapper.Position=UDim2.new(0.04,0,0.08,0)
     Wrapper.BackgroundTransparency=1
     Instance.new("UICorner",Wrapper).CornerRadius=UDim.new(0,12)
-    Instance.new("UIStroke",Wrapper).Color=Color3.fromRGB(255,60,60)
-    getmetatable(Instance.new("UIStroke",Wrapper)).Thickness=1.5
-    self.Wrapper=Wrapper
+local WStroke=Instance.new("UIStroke",Wrapper)
+WStroke.Color=Color3.fromRGB(255,60,60)
+WStroke.Thickness=1.5
+self.Wrapper=Wrapper
 
     local Main=Instance.new("Frame",Wrapper)
     Main.Size=UDim2.new(1,0,1,0); Main.BackgroundColor3=Color3.fromRGB(12,8,8)
